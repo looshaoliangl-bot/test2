@@ -81,6 +81,10 @@ section[hidden]{display:none}
 .cm{border-top:1px solid var(--line);padding:8px 0;font-size:14px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 </head>
 <body>
 <div class="app">
@@ -116,16 +120,24 @@ S.mode='customer';
 const ping=()=>{const a=document.activeElement;if(!(a&&/INPUT|TEXTAREA/.test(a.tagName)))render()};
 const toast=m=>{const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2600)};
 
-/* Shared data: live database when the page is shared with signed-in people, otherwise this device only */
-const Sync={d:{orders:[],fb:[],cfg:[]},db:null,live:false,
+/* Shared data: Firebase Firestore when firebase-config.js is filled in, otherwise this device only (demo mode) */
+const Sync={d:{orders:[],fb:[],cfg:[]},db:null,live:false,warned:false,
  load(n){this.d[n]=store.get('c:'+n,[])},
+ fallback(){if(!this.db)return;this.db=null;this.live=false;Object.keys(this.d).forEach(n=>this.load(n));if(!this.warned){this.warned=true;toast('Live sync is off. Saved on this device only.')}ping()},
  async init(){
   Object.keys(this.d).forEach(n=>this.load(n));
-  try{const db=await claude.use('db');if(db){this.db=db;this.live=true;Object.keys(this.d).forEach(n=>db.collection(n).onSnapshot(s=>{if(!this.db)return;this.d[n]=s.docs.map(x=>({...x.data(),id:x.id}));ping()},()=>{}))}}catch(e){}
-  try{const u=await claude.use('user');if(u&&!u.canEdit())S.locked=true}catch(e){}
+  try{
+   const cfg=window.FIREBASE_CONFIG;
+   if(window.firebase&&cfg&&cfg.apiKey&&!/YOUR_/.test(cfg.apiKey)){
+    const app=firebase.apps.length?firebase.app():firebase.initializeApp(cfg);
+    try{await firebase.auth(app).signInAnonymously()}catch(e){}
+    const db=firebase.firestore(app);this.db=db;this.live=true;
+    Object.keys(this.d).forEach(n=>db.collection(n).onSnapshot(s=>{if(!this.db)return;this.d[n]=s.docs.map(x=>({...x.data(),id:x.id}));ping()},()=>this.fallback()));
+   }
+  }catch(e){this.db=null;this.live=false}
   ping()},
  async put(n,o){
-  if(this.db){try{await this.db.collection(n).doc(o.id).set(o);return}catch(e){this.db=null;this.live=false;toast('Live sync is off. Saved on this device only.')}}
+  if(this.db){try{await this.db.collection(n).doc(o.id).set(o);return}catch(e){this.fallback()}}
   const a=this.d[n].filter(x=>x.id!==o.id);a.push(o);this.d[n]=a;store.set('c:'+n,a);ping()}
 };
 addEventListener('storage',()=>{if(!Sync.db){Object.keys(Sync.d).forEach(n=>Sync.load(n));ping()}});
